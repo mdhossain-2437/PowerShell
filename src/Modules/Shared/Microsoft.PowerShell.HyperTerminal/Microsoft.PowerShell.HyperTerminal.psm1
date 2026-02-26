@@ -50,7 +50,7 @@ function Read-HyperConfigContent
     return Get-Content -Path $configPath -Raw
 }
 
-function Get-PluginListFromContent
+function Get-PluginFromContent
 {
     <#
     .SYNOPSIS
@@ -68,9 +68,9 @@ function Get-PluginListFromContent
     if ($Content -match 'plugins\s*:\s*\[([^\]]*)\]')
     {
         $pluginBlock = $Matches[1]
-        $pluginEntries = [regex]::Matches($pluginBlock, '''([^'']+)''|"([^"]+)"')
+        $regexMatchResult = [regex]::Matches($pluginBlock, '''([^'']+)''|"([^"]+)"')
 
-        foreach ($entry in $pluginEntries)
+        foreach ($entry in $regexMatchResult)
         {
             $pluginName = if ($entry.Groups[1].Success) { $entry.Groups[1].Value } else { $entry.Groups[2].Value }
             $pluginList += $pluginName
@@ -131,7 +131,7 @@ function Get-HyperPlugin
         return
     }
 
-    $pluginNames = Get-PluginListFromContent -Content $content
+    $pluginNames = Get-PluginFromContent -Content $content
 
     foreach ($name in $pluginNames)
     {
@@ -174,7 +174,7 @@ function Install-HyperPlugin
         return
     }
 
-    $existingPlugins = Get-PluginListFromContent -Content $content
+    $existingPlugins = Get-PluginFromContent -Content $content
 
     if ($existingPlugins -contains $Name)
     {
@@ -239,7 +239,7 @@ function Remove-HyperPlugin
         return
     }
 
-    $existingPlugins = Get-PluginListFromContent -Content $content
+    $existingPlugins = Get-PluginFromContent -Content $content
 
     if ($existingPlugins -notcontains $Name)
     {
@@ -322,7 +322,7 @@ function Get-HyperConfiguration
     }
 
     # Parse plugins
-    $config['plugins'] = Get-PluginListFromContent -Content $content
+    $config['plugins'] = Get-PluginFromContent -Content $content
 
     $configObj = [PSCustomObject]$config
 
@@ -443,12 +443,6 @@ function Enable-HyperShellIntegration
         }
 
         Write-Verbose "OSC window title integration enabled."
-    }
-
-    # Emit OSC 7 (current working directory) for Hyper's directory tracking
-    # This enables plugins like 'hypercwd' to track the current directory
-    $ExecutionContext.InvokeCommand.PostCommandLookupAction = {
-        param($CommandName, $CommandLookupEventArgs)
     }
 
     Write-Verbose "Hyper shell integration enabled."

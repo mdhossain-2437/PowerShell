@@ -4,7 +4,7 @@
 Describe "Microsoft.PowerShell.HyperTerminal Module" -Tags "CI" {
 
     BeforeAll {
-        $modulePath = Join-Path $PSScriptRoot '..\..\..\..\src\Modules\Shared\Microsoft.PowerShell.HyperTerminal'
+        $modulePath = Join-Path $PSScriptRoot '..' '..' '..' '..' 'src' 'Modules' 'Shared' 'Microsoft.PowerShell.HyperTerminal'
         Import-Module $modulePath -Force
     }
 
