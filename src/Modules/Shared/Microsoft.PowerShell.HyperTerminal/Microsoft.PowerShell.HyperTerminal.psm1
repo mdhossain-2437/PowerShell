@@ -41,6 +41,15 @@ $script:HyperPowerOptions = $null
 $script:HyperPowerParticles = $null
 $script:HyperPowerTimer = $null
 $script:HyperPowerKeyHandlersRegistered = $false
+$script:HyperPowerRandom = [System.Random]::new()
+
+# Printable character set for key handler registration (built once, shared)
+$script:PrintableChars = @()
+for ($i = [int][char]'a'; $i -le [int][char]'z'; $i++) { $script:PrintableChars += [char]$i }
+for ($i = [int][char]'A'; $i -le [int][char]'Z'; $i++) { $script:PrintableChars += [char]$i }
+for ($i = [int][char]'0'; $i -le [int][char]'9'; $i++) { $script:PrintableChars += [char]$i }
+$script:PrintableChars += @(' ', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
+    '[', ']', '{', '}', '\', '|', ';', ':', "'", '"', ',', '<', '.', '>', '/', '?', '`', '~')
 
 function Initialize-HyperPowerState
 {
@@ -85,16 +94,16 @@ function New-Particle
     $opts = $script:HyperPowerOptions
     $vxRange = $opts.ParticleVelocityX
     $vyRange = $opts.ParticleVelocityY
-    $random = [System.Random]::new()
+    $rng = $script:HyperPowerRandom
 
     return @{
         X        = [double]$X
         Y        = [double]$Y
         Alpha    = 1.0
         Color    = $Color
-        VelocityX = $vxRange[0] + ($random.NextDouble() * ($vxRange[1] - $vxRange[0]))
-        VelocityY = $vyRange[0] + ($random.NextDouble() * ($vyRange[1] - $vyRange[0]))
-        Char     = $opts.ParticleChars[$random.Next($opts.ParticleChars.Count)]
+        VelocityX = $vxRange[0] + ($rng.NextDouble() * ($vxRange[1] - $vxRange[0]))
+        VelocityY = $vyRange[0] + ($rng.NextDouble() * ($vyRange[1] - $vyRange[0]))
+        Char     = $opts.ParticleChars[$rng.Next($opts.ParticleChars.Count)]
     }
 }
 
@@ -123,9 +132,9 @@ function Add-ParticlesAtCursor
     $colorSet = if ($opts.WowMode) { $opts.WowColors } else { $opts.Colors }
 
     # Spawn particles
-    $random = [System.Random]::new()
+    $rng = $script:HyperPowerRandom
     $numRange = $opts.ParticleNumRange
-    $count = $numRange[0] + $random.Next($numRange[1] - $numRange[0] + 1)
+    $count = $numRange[0] + $rng.Next($numRange[1] - $numRange[0] + 1)
 
     for ($i = 0; $i -lt $count; $i++)
     {
@@ -214,10 +223,6 @@ function Get-ParticleDisplayChar
     if ($alpha -gt 0.7)
     {
         return $Particle.Char
-    }
-    elseif ($alpha -gt 0.4)
-    {
-        return '.'
     }
     else
     {
@@ -326,9 +331,9 @@ function Start-AnimationLoop
     Register-ObjectEvent -InputObject $timer -EventName Elapsed -SourceIdentifier 'HyperPowerAnimation' -Action {
         try
         {
-            # Only render if there are particles and we have an interactive console
-            $modulePath = $Event.MessageData
-            if ($null -ne $modulePath)
+            # Only render if the module context is available
+            $moduleContext = $Event.MessageData
+            if ($null -ne $moduleContext)
             {
                 & (Get-Module Microsoft.PowerShell.HyperTerminal) { Render-ParticleFrame }
             }
@@ -390,18 +395,7 @@ function Register-HyperPowerKeyHandlers
     }
 
     # Register a handler for common printable characters
-    # We use the PSReadLine AddKeyHandler approach
-    $printableChars = @()
-    # Letters
-    for ($i = [int][char]'a'; $i -le [int][char]'z'; $i++) { $printableChars += [char]$i }
-    for ($i = [int][char]'A'; $i -le [int][char]'Z'; $i++) { $printableChars += [char]$i }
-    # Numbers
-    for ($i = [int][char]'0'; $i -le [int][char]'9'; $i++) { $printableChars += [char]$i }
-    # Common punctuation and symbols
-    $printableChars += @(' ', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
-        '[', ']', '{', '}', '\', '|', ';', ':', "'", '"', ',', '<', '.', '>', '/', '?', '`', '~')
-
-    foreach ($charKey in $printableChars)
+    foreach ($charKey in $script:PrintableChars)
     {
         try
         {
@@ -442,14 +436,7 @@ function Unregister-HyperPowerKeyHandlers
         return
     }
 
-    $printableChars = @()
-    for ($i = [int][char]'a'; $i -le [int][char]'z'; $i++) { $printableChars += [char]$i }
-    for ($i = [int][char]'A'; $i -le [int][char]'Z'; $i++) { $printableChars += [char]$i }
-    for ($i = [int][char]'0'; $i -le [int][char]'9'; $i++) { $printableChars += [char]$i }
-    $printableChars += @(' ', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
-        '[', ']', '{', '}', '\', '|', ';', ':', "'", '"', ',', '<', '.', '>', '/', '?', '`', '~')
-
-    foreach ($charKey in $printableChars)
+    foreach ($charKey in $script:PrintableChars)
     {
         try
         {
@@ -967,8 +954,7 @@ function Start-HyperPower
 
     if ($WowMode)
     {
-        Write-Host "`e[38;2;255;255;50mWOW`e[38;2;255;150;0m such on`e[0m" -NoNewline
-        Write-Host ''
+        Write-Host "`e[38;2;255;255;50mWOW`e[38;2;255;150;0m such on`e[0m"
     }
     else
     {
@@ -1009,8 +995,7 @@ function Stop-HyperPower
 
         if ($wasWow)
         {
-            Write-Host "`e[38;2;255;255;50mWOW`e[38;2;255;150;0m such off`e[0m" -NoNewline
-            Write-Host ''
+            Write-Host "`e[38;2;255;255;50mWOW`e[38;2;255;150;0m such off`e[0m"
         }
         else
         {

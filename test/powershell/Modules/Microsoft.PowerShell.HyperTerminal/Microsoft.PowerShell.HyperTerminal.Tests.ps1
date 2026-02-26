@@ -332,8 +332,10 @@ module.exports = {
 
     Context "HyperPower - Set-HyperPowerOption" {
         AfterEach {
-            # Reset to defaults
+            # Reset to defaults and clean up any timers/handlers
             & (Get-Module Microsoft.PowerShell.HyperTerminal) {
+                Stop-AnimationLoop
+                Unregister-HyperPowerKeyHandlers
                 $script:HyperPowerOptions = $null
                 Initialize-HyperPowerState
             }
@@ -629,17 +631,20 @@ module.exports = {
         }
 
         It "Should disable the Enabled flag when stopped" {
+            # Suppress PSReadLine warnings in CI (3>&1 redirects warning stream)
             Start-HyperPower 3>&1 | Out-Null
             Stop-HyperPower
             Get-HyperPowerOption -Name 'Enabled' | Should -BeFalse
         }
 
         It "Should enable WowMode when started with -WowMode" {
+            # Suppress PSReadLine warnings in CI (3>&1 redirects warning stream)
             Start-HyperPower -WowMode 3>&1 | Out-Null
             Get-HyperPowerOption -Name 'WowMode' | Should -BeTrue
         }
 
         It "Should disable WowMode when stopped" {
+            # Suppress PSReadLine warnings in CI (3>&1 redirects warning stream)
             Start-HyperPower -WowMode 3>&1 | Out-Null
             Stop-HyperPower
             Get-HyperPowerOption -Name 'WowMode' | Should -BeFalse
