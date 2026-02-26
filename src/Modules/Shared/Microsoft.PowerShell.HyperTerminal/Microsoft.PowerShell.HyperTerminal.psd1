@@ -3,8 +3,8 @@ GUID = "2D12A480-7DC5-4F61-9FC7-B452C65FB621"
 Author = "PowerShell"
 CompanyName = "Microsoft Corporation"
 Copyright = "Copyright (c) Microsoft Corporation."
-Description = "PowerShell module for Hyper terminal integration. Provides functions to detect, configure, and manage Hyper terminal plugins and settings."
-ModuleVersion = "1.0.0"
+Description = "PowerShell module for Hyper terminal integration with HyperPower particle effects. Provides functions to detect, configure, and manage Hyper terminal plugins and enables particle spark effects (inspired by the hyperpower addon) directly in the terminal."
+ModuleVersion = "1.1.0"
 CompatiblePSEditions = @("Core")
 PowerShellVersion = "7.0"
 RootModule = "Microsoft.PowerShell.HyperTerminal.psm1"
@@ -15,14 +15,18 @@ FunctionsToExport = @(
     'Remove-HyperPlugin',
     'Get-HyperConfiguration',
     'Set-HyperConfiguration',
-    'Enable-HyperShellIntegration'
+    'Enable-HyperShellIntegration',
+    'Start-HyperPower',
+    'Stop-HyperPower',
+    'Get-HyperPowerOption',
+    'Set-HyperPowerOption'
 )
 CmdletsToExport = @()
 VariablesToExport = @()
 AliasesToExport = @()
 PrivateData = @{
     PSData = @{
-        Tags = @('Hyper', 'Terminal', 'HyperTerminal', 'Plugin', 'Integration')
+        Tags = @('Hyper', 'Terminal', 'HyperTerminal', 'HyperPower', 'Particles', 'Plugin', 'Integration')
         ProjectUri = 'https://github.com/PowerShell/PowerShell'
         LicenseUri = 'https://github.com/PowerShell/PowerShell/blob/master/LICENSE.txt'
     }

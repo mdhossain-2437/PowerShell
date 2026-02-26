@@ -3,6 +3,472 @@
 
 Set-StrictMode -Version 3.0
 
+#region HyperPower Particle Effect Engine
+
+# Default configuration for the particle effect, matching hyperpower's behavior.
+$script:HyperPowerDefaults = @{
+    MaxParticles         = 500
+    ParticleNumRange     = @(5, 10)
+    ParticleGravity      = 0.075
+    ParticleAlphaFadeout = 0.96
+    ParticleVelocityX    = @(-1.0, 1.0)
+    ParticleVelocityY    = @(-3.5, -1.5)
+    AlphaMinThreshold    = 0.1
+    Colors               = @(
+        @{ R = 255; G = 255; B = 80 }
+        @{ R = 255; G = 200; B = 40 }
+        @{ R = 255; G = 150; B = 0 }
+        @{ R = 255; G = 100; B = 20 }
+    )
+    WowMode              = $false
+    WowColors            = @(
+        @{ R = 255; G = 50;  B = 50 }
+        @{ R = 50;  G = 255; B = 50 }
+        @{ R = 50;  G = 100; B = 255 }
+        @{ R = 255; G = 255; B = 50 }
+        @{ R = 255; G = 50;  B = 255 }
+        @{ R = 50;  G = 255; B = 255 }
+        @{ R = 255; G = 165; B = 0 }
+        @{ R = 200; G = 50;  B = 255 }
+    )
+    ParticleChars        = @('.', '*', '+', 'o')
+    FrameIntervalMs      = 50
+    Enabled              = $false
+}
+
+# Live state
+$script:HyperPowerOptions = $null
+$script:HyperPowerParticles = $null
+$script:HyperPowerTimer = $null
+$script:HyperPowerKeyHandlersRegistered = $false
+
+function Initialize-HyperPowerState
+{
+    <#
+    .SYNOPSIS
+        Initializes or resets the particle engine state.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ($null -eq $script:HyperPowerOptions)
+    {
+        $script:HyperPowerOptions = @{}
+        foreach ($key in $script:HyperPowerDefaults.Keys)
+        {
+            $script:HyperPowerOptions[$key] = $script:HyperPowerDefaults[$key]
+        }
+    }
+
+    $script:HyperPowerParticles = [System.Collections.ArrayList]::new()
+}
+
+function New-Particle
+{
+    <#
+    .SYNOPSIS
+        Creates a new particle at the given terminal coordinates.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [int] $X,
+
+        [Parameter(Mandatory)]
+        [int] $Y,
+
+        [Parameter(Mandatory)]
+        [hashtable] $Color
+    )
+
+    $opts = $script:HyperPowerOptions
+    $vxRange = $opts.ParticleVelocityX
+    $vyRange = $opts.ParticleVelocityY
+    $random = [System.Random]::new()
+
+    return @{
+        X        = [double]$X
+        Y        = [double]$Y
+        Alpha    = 1.0
+        Color    = $Color
+        VelocityX = $vxRange[0] + ($random.NextDouble() * ($vxRange[1] - $vxRange[0]))
+        VelocityY = $vyRange[0] + ($random.NextDouble() * ($vyRange[1] - $vyRange[0]))
+        Char     = $opts.ParticleChars[$random.Next($opts.ParticleChars.Count)]
+    }
+}
+
+function Add-ParticlesAtCursor
+{
+    <#
+    .SYNOPSIS
+        Spawns a batch of particles at the current cursor position.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ($null -eq $script:HyperPowerOptions -or -not $script:HyperPowerOptions.Enabled)
+    {
+        return
+    }
+
+    $particles = $script:HyperPowerParticles
+    $opts = $script:HyperPowerOptions
+
+    # Get cursor position
+    $cursorX = [Console]::CursorLeft
+    $cursorY = [Console]::CursorTop
+
+    # Determine colors to use
+    $colorSet = if ($opts.WowMode) { $opts.WowColors } else { $opts.Colors }
+
+    # Spawn particles
+    $random = [System.Random]::new()
+    $numRange = $opts.ParticleNumRange
+    $count = $numRange[0] + $random.Next($numRange[1] - $numRange[0] + 1)
+
+    for ($i = 0; $i -lt $count; $i++)
+    {
+        $color = $colorSet[$i % $colorSet.Count]
+        $particle = New-Particle -X $cursorX -Y $cursorY -Color $color
+        if ($particles.Count -lt $opts.MaxParticles)
+        {
+            [void]$particles.Add($particle)
+        }
+    }
+}
+
+function Update-ParticlePhysics
+{
+    <#
+    .SYNOPSIS
+        Updates particle positions and alpha values for one frame.
+    .DESCRIPTION
+        Applies gravity, velocity, and alpha fadeout to all active particles.
+        Removes particles that have faded below the threshold.
+    .OUTPUTS
+        System.Collections.ArrayList of updated particles.
+    #>
+    [CmdletBinding()]
+    [OutputType([System.Collections.ArrayList])]
+    param(
+        [Parameter(Mandatory)]
+        [System.Collections.ArrayList] $ParticleList,
+
+        [Parameter(Mandatory)]
+        [hashtable] $Option
+    )
+
+    $updatedParticles = [System.Collections.ArrayList]::new()
+
+    foreach ($p in $ParticleList)
+    {
+        # Apply gravity
+        $p.VelocityY += $Option.ParticleGravity
+
+        # Update position
+        $p.X += $p.VelocityX
+        $p.Y += $p.VelocityY
+
+        # Apply alpha fadeout
+        $p.Alpha *= $Option.ParticleAlphaFadeout
+
+        # Keep particle if still visible
+        if ($p.Alpha -gt $Option.AlphaMinThreshold)
+        {
+            [void]$updatedParticles.Add($p)
+        }
+    }
+
+    # Trim to max particles (keep newest)
+    if ($updatedParticles.Count -gt $Option.MaxParticles)
+    {
+        $startIndex = $updatedParticles.Count - $Option.MaxParticles
+        $trimmed = [System.Collections.ArrayList]::new()
+        for ($i = $startIndex; $i -lt $updatedParticles.Count; $i++)
+        {
+            [void]$trimmed.Add($updatedParticles[$i])
+        }
+
+        return $trimmed
+    }
+
+    return $updatedParticles
+}
+
+function Get-ParticleDisplayChar
+{
+    <#
+    .SYNOPSIS
+        Returns the display character for a particle based on its alpha value.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable] $Particle
+    )
+
+    $alpha = $Particle.Alpha
+
+    if ($alpha -gt 0.7)
+    {
+        return $Particle.Char
+    }
+    elseif ($alpha -gt 0.4)
+    {
+        return '.'
+    }
+    else
+    {
+        return '.'
+    }
+}
+
+function ConvertTo-AnsiColorString
+{
+    <#
+    .SYNOPSIS
+        Converts an RGB color hashtable and alpha to an ANSI escape sequence.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable] $Color,
+
+        [Parameter(Mandatory)]
+        [double] $Alpha
+    )
+
+    # Scale RGB by alpha for brightness fading
+    $r = [Math]::Max(0, [Math]::Min(255, [int]($Color.R * $Alpha)))
+    $g = [Math]::Max(0, [Math]::Min(255, [int]($Color.G * $Alpha)))
+    $b = [Math]::Max(0, [Math]::Min(255, [int]($Color.B * $Alpha)))
+
+    return "`e[38;2;${r};${g};${b}m"
+}
+
+function Render-ParticleFrame
+{
+    <#
+    .SYNOPSIS
+        Renders one frame of the particle animation to the terminal.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $particles = $script:HyperPowerParticles
+    $opts = $script:HyperPowerOptions
+
+    if ($null -eq $particles -or $particles.Count -eq 0)
+    {
+        return
+    }
+
+    $bufferWidth = [Console]::BufferWidth
+    $bufferHeight = [Console]::BufferHeight
+
+    # Build the complete frame as a single string to minimize flicker
+    $frameBuilder = [System.Text.StringBuilder]::new()
+
+    # Save cursor position
+    [void]$frameBuilder.Append("`e7")
+
+    foreach ($p in $particles)
+    {
+        $col = [Math]::Round($p.X)
+        $row = [Math]::Round($p.Y)
+
+        # Bounds check - only render particles within the visible terminal area
+        if ($col -ge 0 -and $col -lt $bufferWidth -and $row -ge 0 -and $row -lt $bufferHeight)
+        {
+            $colorSeq = ConvertTo-AnsiColorString -Color $p.Color -Alpha $p.Alpha
+            $displayChar = Get-ParticleDisplayChar -Particle $p
+
+            # Move cursor to particle position (1-based), draw character
+            $ansiRow = $row + 1
+            $ansiCol = $col + 1
+            [void]$frameBuilder.Append("`e[${ansiRow};${ansiCol}H")
+            [void]$frameBuilder.Append($colorSeq)
+            [void]$frameBuilder.Append($displayChar)
+        }
+    }
+
+    # Reset color and restore cursor position
+    [void]$frameBuilder.Append("`e[0m")
+    [void]$frameBuilder.Append("`e8")
+
+    # Write the entire frame at once
+    [Console]::Write($frameBuilder.ToString())
+
+    # Update physics for next frame
+    $script:HyperPowerParticles = Update-ParticlePhysics -ParticleList $particles -Option $opts
+}
+
+function Start-AnimationLoop
+{
+    <#
+    .SYNOPSIS
+        Starts the background animation timer for particle rendering.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ($null -ne $script:HyperPowerTimer)
+    {
+        return
+    }
+
+    $timer = [System.Timers.Timer]::new($script:HyperPowerOptions.FrameIntervalMs)
+    $timer.AutoReset = $true
+
+    Register-ObjectEvent -InputObject $timer -EventName Elapsed -SourceIdentifier 'HyperPowerAnimation' -Action {
+        try
+        {
+            # Only render if there are particles and we have an interactive console
+            $modulePath = $Event.MessageData
+            if ($null -ne $modulePath)
+            {
+                & (Get-Module Microsoft.PowerShell.HyperTerminal) { Render-ParticleFrame }
+            }
+        }
+        catch
+        {
+            # Silently ignore rendering errors to avoid disrupting the shell
+        }
+    } -MessageData $PSScriptRoot | Out-Null
+
+    $timer.Start()
+    $script:HyperPowerTimer = $timer
+}
+
+function Stop-AnimationLoop
+{
+    <#
+    .SYNOPSIS
+        Stops the background animation timer.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ($null -ne $script:HyperPowerTimer)
+    {
+        $script:HyperPowerTimer.Stop()
+        $script:HyperPowerTimer.Dispose()
+        $script:HyperPowerTimer = $null
+    }
+
+    # Unregister the event
+    Get-EventSubscriber -SourceIdentifier 'HyperPowerAnimation' -ErrorAction SilentlyContinue |
+        Unregister-Event -ErrorAction SilentlyContinue
+
+    Get-Job -Name 'HyperPowerAnimation' -ErrorAction SilentlyContinue |
+        Remove-Job -Force -ErrorAction SilentlyContinue
+}
+
+function Register-HyperPowerKeyHandlers
+{
+    <#
+    .SYNOPSIS
+        Registers PSReadLine key handlers to trigger particle spawning on keystrokes.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ($script:HyperPowerKeyHandlersRegistered)
+    {
+        return
+    }
+
+    # Check if PSReadLine is available
+    $psReadLine = Get-Module PSReadLine -ErrorAction SilentlyContinue
+    if ($null -eq $psReadLine)
+    {
+        Write-Warning "PSReadLine module is not loaded. HyperPower keyboard integration unavailable."
+        return
+    }
+
+    # Register a handler for common printable characters
+    # We use the PSReadLine AddKeyHandler approach
+    $printableChars = @()
+    # Letters
+    for ($i = [int][char]'a'; $i -le [int][char]'z'; $i++) { $printableChars += [char]$i }
+    for ($i = [int][char]'A'; $i -le [int][char]'Z'; $i++) { $printableChars += [char]$i }
+    # Numbers
+    for ($i = [int][char]'0'; $i -le [int][char]'9'; $i++) { $printableChars += [char]$i }
+    # Common punctuation and symbols
+    $printableChars += @(' ', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
+        '[', ']', '{', '}', '\', '|', ';', ':', "'", '"', ',', '<', '.', '>', '/', '?', '`', '~')
+
+    foreach ($charKey in $printableChars)
+    {
+        try
+        {
+            Set-PSReadLineKeyHandler -Chord $charKey -ScriptBlock {
+                param($key, $arg)
+                # Insert the character normally
+                [Microsoft.PowerShell.PSConsoleReadLine]::SelfInsert($key, $arg)
+                # Spawn particles
+                & (Get-Module Microsoft.PowerShell.HyperTerminal) { Add-ParticlesAtCursor }
+            } -Description 'HyperPower particle effect' -ErrorAction SilentlyContinue
+        }
+        catch
+        {
+            # Some keys may not be bindable, skip them
+        }
+    }
+
+    $script:HyperPowerKeyHandlersRegistered = $true
+}
+
+function Unregister-HyperPowerKeyHandlers
+{
+    <#
+    .SYNOPSIS
+        Removes PSReadLine key handlers for particle spawning.
+    #>
+    [CmdletBinding()]
+    param()
+
+    if (-not $script:HyperPowerKeyHandlersRegistered)
+    {
+        return
+    }
+
+    $psReadLine = Get-Module PSReadLine -ErrorAction SilentlyContinue
+    if ($null -eq $psReadLine)
+    {
+        return
+    }
+
+    $printableChars = @()
+    for ($i = [int][char]'a'; $i -le [int][char]'z'; $i++) { $printableChars += [char]$i }
+    for ($i = [int][char]'A'; $i -le [int][char]'Z'; $i++) { $printableChars += [char]$i }
+    for ($i = [int][char]'0'; $i -le [int][char]'9'; $i++) { $printableChars += [char]$i }
+    $printableChars += @(' ', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '=', '+',
+        '[', ']', '{', '}', '\', '|', ';', ':', "'", '"', ',', '<', '.', '>', '/', '?', '`', '~')
+
+    foreach ($charKey in $printableChars)
+    {
+        try
+        {
+            Remove-PSReadLineKeyHandler -Chord $charKey -ErrorAction SilentlyContinue
+        }
+        catch
+        {
+            # Ignore errors for keys that weren't bound
+        }
+    }
+
+    $script:HyperPowerKeyHandlersRegistered = $false
+}
+
+# Initialize state on module load
+Initialize-HyperPowerState
+
+#endregion HyperPower Particle Effect Engine
+
 #region Private Helpers
 
 function Get-HyperConfigPath
@@ -446,6 +912,211 @@ function Enable-HyperShellIntegration
     }
 
     Write-Verbose "Hyper shell integration enabled."
+}
+
+function Start-HyperPower
+{
+    <#
+    .SYNOPSIS
+        Enables the HyperPower particle spark effect in the current PowerShell session.
+    .DESCRIPTION
+        Activates particle effects inspired by the Hyper terminal 'hyperpower' addon.
+        When enabled, typing characters spawns colorful particles that fly outward from
+        the cursor position with gravity, velocity, and alpha fadeout — creating a
+        visual "wow" effect directly in the terminal.
+
+        The effect uses ANSI escape sequences with RGB colors and works in terminals
+        that support VT100/xterm-256color (including Hyper, Windows Terminal, VS Code,
+        and most modern terminal emulators).
+
+        Uses PSReadLine key handlers to detect keystrokes and a background timer
+        for particle animation.
+    .PARAMETER WowMode
+        Enables multi-color wow mode. When on, particles use a rainbow color palette
+        instead of the default warm gold/orange colors.
+    .EXAMPLE
+        Start-HyperPower
+    .EXAMPLE
+        Start-HyperPower -WowMode
+    #>
+    [CmdletBinding()]
+    param(
+        [switch] $WowMode
+    )
+
+    Initialize-HyperPowerState
+
+    $script:HyperPowerOptions.Enabled = $true
+
+    if ($WowMode)
+    {
+        $script:HyperPowerOptions.WowMode = $true
+    }
+
+    # Ensure ANSI output is enabled
+    if ($PSStyle)
+    {
+        $PSStyle.OutputRendering = 'Ansi'
+    }
+
+    # Register key handlers for particle spawning
+    Register-HyperPowerKeyHandlers
+
+    # Start the animation loop
+    Start-AnimationLoop
+
+    if ($WowMode)
+    {
+        Write-Host "`e[38;2;255;255;50mWOW`e[38;2;255;150;0m such on`e[0m" -NoNewline
+        Write-Host ''
+    }
+    else
+    {
+        Write-Verbose "HyperPower particle effects enabled."
+    }
+}
+
+function Stop-HyperPower
+{
+    <#
+    .SYNOPSIS
+        Disables the HyperPower particle spark effect.
+    .DESCRIPTION
+        Stops the particle animation, removes key handlers, and cleans up resources.
+    .EXAMPLE
+        Stop-HyperPower
+    #>
+    [CmdletBinding()]
+    param()
+
+    # Stop animation
+    Stop-AnimationLoop
+
+    # Remove key handlers
+    Unregister-HyperPowerKeyHandlers
+
+    # Clear particles
+    if ($null -ne $script:HyperPowerParticles)
+    {
+        $script:HyperPowerParticles.Clear()
+    }
+
+    if ($null -ne $script:HyperPowerOptions)
+    {
+        $wasWow = $script:HyperPowerOptions.WowMode
+        $script:HyperPowerOptions.Enabled = $false
+        $script:HyperPowerOptions.WowMode = $false
+
+        if ($wasWow)
+        {
+            Write-Host "`e[38;2;255;255;50mWOW`e[38;2;255;150;0m such off`e[0m" -NoNewline
+            Write-Host ''
+        }
+        else
+        {
+            Write-Verbose "HyperPower particle effects disabled."
+        }
+    }
+}
+
+function Get-HyperPowerOption
+{
+    <#
+    .SYNOPSIS
+        Gets the current HyperPower particle effect settings.
+    .DESCRIPTION
+        Returns the current configuration for the particle effects including
+        colors, physics parameters, particle characters, and enabled state.
+    .PARAMETER Name
+        Optional specific setting name to retrieve.
+    .EXAMPLE
+        Get-HyperPowerOption
+    .EXAMPLE
+        Get-HyperPowerOption -Name 'Colors'
+    .EXAMPLE
+        Get-HyperPowerOption -Name 'WowMode'
+    .OUTPUTS
+        PSCustomObject with all settings, or the value of a specific setting.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Position = 0)]
+        [ValidateSet('MaxParticles', 'ParticleNumRange', 'ParticleGravity',
+            'ParticleAlphaFadeout', 'ParticleVelocityX', 'ParticleVelocityY',
+            'AlphaMinThreshold', 'Colors', 'WowMode', 'WowColors',
+            'ParticleChars', 'FrameIntervalMs', 'Enabled')]
+        [string] $Name
+    )
+
+    Initialize-HyperPowerState
+
+    if ($Name)
+    {
+        return $script:HyperPowerOptions[$Name]
+    }
+
+    $result = [ordered]@{
+        PSTypeName = 'Microsoft.PowerShell.HyperTerminal.HyperPowerOptions'
+    }
+
+    foreach ($key in $script:HyperPowerOptions.Keys | Sort-Object)
+    {
+        $result[$key] = $script:HyperPowerOptions[$key]
+    }
+
+    return [PSCustomObject]$result
+}
+
+function Set-HyperPowerOption
+{
+    <#
+    .SYNOPSIS
+        Sets a HyperPower particle effect configuration option.
+    .DESCRIPTION
+        Modifies particle effect settings such as colors, physics parameters,
+        particle characters, and animation speed. Changes take effect immediately
+        if HyperPower is currently running.
+    .PARAMETER Name
+        The name of the setting to modify.
+    .PARAMETER Value
+        The new value for the setting. Type depends on the setting:
+        - MaxParticles: [int] Maximum number of active particles (default: 500)
+        - ParticleNumRange: [int[]] Min and max particles per keystroke (default: 5,10)
+        - ParticleGravity: [double] Downward acceleration (default: 0.075)
+        - ParticleAlphaFadeout: [double] Alpha multiplier per frame, 0-1 (default: 0.96)
+        - ParticleVelocityX: [double[]] Min/max horizontal velocity (default: -1,1)
+        - ParticleVelocityY: [double[]] Min/max vertical velocity (default: -3.5,-1.5)
+        - AlphaMinThreshold: [double] Alpha below which particles are removed (default: 0.1)
+        - Colors: [hashtable[]] Array of @{R=;G=;B=} color hashtables
+        - WowMode: [bool] Enable multi-color wow mode
+        - WowColors: [hashtable[]] Colors used in wow mode
+        - ParticleChars: [string[]] Characters used for particles (default: '.','*','+','o')
+        - FrameIntervalMs: [int] Animation frame interval in milliseconds (default: 50)
+    .EXAMPLE
+        Set-HyperPowerOption -Name 'WowMode' -Value $true
+    .EXAMPLE
+        Set-HyperPowerOption -Name 'ParticleGravity' -Value 0.15
+    .EXAMPLE
+        Set-HyperPowerOption -Name 'Colors' -Value @(@{R=0;G=255;B=0}, @{R=0;G=200;B=0})
+    .EXAMPLE
+        Set-HyperPowerOption -Name 'ParticleChars' -Value @('*', '.', '+', 'x')
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [ValidateSet('MaxParticles', 'ParticleNumRange', 'ParticleGravity',
+            'ParticleAlphaFadeout', 'ParticleVelocityX', 'ParticleVelocityY',
+            'AlphaMinThreshold', 'Colors', 'WowMode', 'WowColors',
+            'ParticleChars', 'FrameIntervalMs')]
+        [string] $Name,
+
+        [Parameter(Mandatory, Position = 1)]
+        [object] $Value
+    )
+
+    Initialize-HyperPowerState
+    $script:HyperPowerOptions[$Name] = $Value
+    Write-Verbose "HyperPower option '$Name' updated."
 }
 
 #endregion Public Functions
