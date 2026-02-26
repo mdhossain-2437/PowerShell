@@ -31,7 +31,7 @@ namespace System.Management.Automation
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 return Environment.GetEnvironmentVariable("WT_SESSION") is not null ||
-                    Environment.GetEnvironmentVariable("TERM_PROGRAM") is "vscode" ||
+                    Environment.GetEnvironmentVariable("TERM_PROGRAM") is "vscode" or "Hyper" ||
                     Environment.GetEnvironmentVariable("ConEmuTask") is "{cmd:Cmder}" ||
                     Environment.GetEnvironmentVariable("TERM") is "xterm-256color" or "alacritty";
             }
